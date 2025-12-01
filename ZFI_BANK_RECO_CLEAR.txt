@@ -1,0 +1,21 @@
+*---------------------------------------------------------------------*
+* Report  : ZFI_BANK_RECO_CLEAR
+* Purpose : Auto clearing of bank-related open items using FB05 BAPI
+* Spec    : FS_v1_1_Micro_Level – Auto Bank Reco Clearing
+* System  : SAP ERP 6.0 / NW 7.5 / S4HANA Finance 1605
+*---------------------------------------------------------------------*
+* Assumptions:
+* - Screen 0100 exists with a Custom Control 'CC_ALV'.
+* - Standard cluster tables BSIS/BSEG and master SKB1 are available.
+* - Function modules:
+*     POSTING_INTERFACE_START
+*     POSTING_INTERFACE_CLEARING
+*     POSTING_INTERFACE_END
+*   are available and configured for transaction FB05.
+*---------------------------------------------------------------------*
+
+REPORT zfi_bank_reco_clear.
+
+INCLUDE zfi_bank_reco_clear_top.   "Global data, types, classes
+INCLUDE zfi_bank_reco_clear_ss.    "Selection screen & events
+INCLUDE zfi_bank_reco_clear_form.  "Forms, modules, business logic

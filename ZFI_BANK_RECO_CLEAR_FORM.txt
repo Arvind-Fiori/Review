@@ -1,0 +1,678 @@
+*---------------------------------------------------------------------*
+* Include : ZFI_BANK_RECO_CLEAR_FORM
+* Purpose : PBO/PAI modules, forms, business logic
+*---------------------------------------------------------------------*
+
+*---------------------------------------------------------------------*
+* PBO/PAI for Screen 0100
+*---------------------------------------------------------------------*
+MODULE status_0100 OUTPUT.
+  SET TITLEBAR '100'.
+  SET PF-STATUS 'ZSTATUS'.   " <– use your new GUI status
+  IF go_grid IS INITIAL.
+    PERFORM build_alv.
+  ENDIF.
+ENDMODULE.
+
+MODULE user_command_0100 INPUT.
+  CASE sy-ucomm.
+    WHEN 'BACK' OR 'UP' OR 'CANC'.
+      LEAVE TO SCREEN 0.
+  ENDCASE.
+ENDMODULE.
+
+*---------------------------------------------------------------------*
+* Form: GET_DATA
+*---------------------------------------------------------------------*
+FORM get_data.
+
+  PERFORM select_skb1.
+  IF gt_skb1_filt IS INITIAL.
+    MESSAGE 'No G/L accounts found in SKB1 for given selection.' TYPE 'E'.
+  ENDIF.
+
+  PERFORM select_bsis.
+  IF gt_bsis IS INITIAL.
+    MESSAGE 'No open items found for the selection criteria.' TYPE 'E'.
+  ENDIF.
+
+  PERFORM select_bseg.
+  PERFORM build_alv_data.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* Form: SELECT_SKB1 - derive bank G/Ls from SKB1
+*---------------------------------------------------------------------*
+FORM select_skb1.
+
+  CLEAR gt_skb1.
+  CLEAR gt_skb1_filt.
+
+  SELECT bukrs,
+         saknr,
+         hbkid,
+         hktid
+    FROM skb1
+    INTO TABLE @gt_skb1
+    WHERE bukrs = @p_bukrs
+      AND hbkid IN @s_hbkid
+      AND hktid IN @s_htkid.
+
+  " Filter: keep only HKONT with last digit 1,2,3,4
+  LOOP AT gt_skb1 INTO gs_skb1.
+    IF gs_skb1-hkont+9(1) = '1'
+    OR gs_skb1-hkont+9(1) = '2'
+    OR gs_skb1-hkont+9(1) = '3'
+    OR gs_skb1-hkont+9(1) = '4'.
+      APPEND gs_skb1 TO gt_skb1_filt.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* Form: SELECT_BSIS - open items from BSIS
+*---------------------------------------------------------------------*
+FORM select_bsis.
+
+  CLEAR gt_bsis.
+
+  IF gt_skb1_filt IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  SELECT bsis~bukrs,
+         bsis~hkont,
+         bsis~belnr,
+         bsis~gjahr,
+         bsis~buzei,
+*         bsis~hbkid,
+*         bsis~htkid,
+         bsis~budat,
+         bsis~bldat,
+         bsis~wrbtr,
+         bsis~waers,
+         bsis~shkzg,
+         bsis~prctr,
+         bsis~zuonr
+    FROM bsis AS bsis
+    INTO TABLE @gt_bsis
+    FOR ALL ENTRIES IN @gt_skb1_filt
+    WHERE bsis~bukrs = @gt_skb1_filt-bukrs
+      AND bsis~hkont = @gt_skb1_filt-hkont
+      AND bsis~budat <= @p_ason
+      AND bsis~budat IN @s_budat
+      AND bsis~augbl = ''.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* Form: SELECT_BSEG - read Value Date from BSEG
+*---------------------------------------------------------------------*
+FORM select_bseg.
+
+  CLEAR gt_bseg.
+
+  IF gt_bsis IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  SELECT bukrs,
+         belnr,
+         gjahr,
+         buzei,
+         valut
+    FROM bseg
+    INTO TABLE @gt_bseg
+    FOR ALL ENTRIES IN @gt_bsis
+    WHERE bukrs = @gt_bsis-bukrs
+      AND belnr = @gt_bsis-belnr
+      AND gjahr = @gt_bsis-gjahr
+      AND buzei = @gt_bsis-buzei.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* Form: BUILD_ALV_DATA - fill ALV internal table
+*---------------------------------------------------------------------*
+FORM build_alv_data.
+
+  CLEAR gt_alv.
+  SORT : gt_bseg BY bukrs  belnr  gjahr  buzei.
+  LOOP AT gt_bsis INTO gs_bsis.
+    CLEAR gs_alv.
+
+    gs_alv-sel_flag = space.
+    gs_alv-bukrs    = gs_bsis-bukrs.
+    gs_alv-hkont    = gs_bsis-hkont.
+    gs_alv-belnr    = gs_bsis-belnr.
+    gs_alv-gjahr    = gs_bsis-gjahr.
+    gs_alv-buzei    = gs_bsis-buzei.
+*    gs_alv-hbkid    = gs_bsis-hbkid.
+*    gs_alv-htkid    = gs_bsis-htkid.
+    gs_alv-budat    = gs_bsis-budat.
+    gs_alv-bldat    = gs_bsis-bldat.
+    gs_alv-wrbtr    = gs_bsis-wrbtr.
+    gs_alv-waers    = gs_bsis-waers.
+    gs_alv-shkzg    = gs_bsis-shkzg.
+    gs_alv-prctr    = gs_bsis-prctr.
+    gs_alv-zuonr    = gs_bsis-zuonr.
+
+    " Value Date from BSEG-VALUT (optional)
+    READ TABLE gt_bseg INTO gs_bseg
+         WITH KEY bukrs = gs_bsis-bukrs
+                  belnr = gs_bsis-belnr
+                  gjahr = gs_bsis-gjahr
+                  buzei = gs_bsis-buzei BINARY SEARCH.
+    IF sy-subrc = 0.
+      gs_alv-datum = gs_bseg-valut.
+    ELSE.
+      CLEAR gs_alv-datum. "Left blank if no BSEG record
+    ENDIF.
+
+    APPEND gs_alv TO gt_alv.
+  ENDLOOP.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* Form: BUILD_ALV - create ALV Grid
+*---------------------------------------------------------------------*
+FORM build_alv.
+
+  " Create container & grid
+  CREATE OBJECT go_container
+    EXPORTING
+      container_name = 'CC_ALV'.
+
+  CREATE OBJECT go_grid
+    EXPORTING
+      i_parent = go_container.
+
+  " Event handler
+  CREATE OBJECT go_event_handler.
+  SET HANDLER go_event_handler->handle_toolbar      FOR go_grid.
+  SET HANDLER go_event_handler->handle_user_command FOR go_grid.
+
+  " Field catalog
+  PERFORM build_fieldcatalog.
+
+  " Layout
+  CLEAR gs_layout.
+  gs_layout-zebra      = abap_true.
+  gs_layout-cwidth_opt = abap_true.
+*  gs_layout-edit       = abap_true.   " <<< make grid editable
+  "-------------------------------------------------------------
+  " Exclude unwanted ALV toolbar buttons (highlighted ones)
+  "-------------------------------------------------------------
+  CLEAR gt_exclude.
+
+  APPEND cl_gui_alv_grid=>mc_fc_loc_copy_row     TO gt_exclude.
+  APPEND cl_gui_alv_grid=>mc_fc_loc_cut     TO gt_exclude.
+  APPEND cl_gui_alv_grid=>mc_fc_loc_copy     TO gt_exclude.
+  APPEND cl_gui_alv_grid=>mc_fc_loc_copy_row     TO gt_exclude.
+
+
+
+
+  APPEND cl_gui_alv_grid=>mc_fc_load_variant     TO gt_exclude.
+  APPEND cl_gui_alv_grid=>mc_fc_loc_paste     TO gt_exclude.
+  APPEND cl_gui_alv_grid=>mc_fc_loc_paste_new_row     TO gt_exclude.
+  APPEND cl_gui_alv_grid=>mc_fc_loc_append_row     TO gt_exclude.
+  APPEND cl_gui_alv_grid=>mc_fc_loc_delete_row   TO gt_exclude.
+  APPEND cl_gui_alv_grid=>mc_fc_loc_insert_row   TO gt_exclude.
+  APPEND cl_gui_alv_grid=>mc_fc_loc_append_row   TO gt_exclude.
+  APPEND cl_gui_alv_grid=>mc_fc_loc_undo         TO gt_exclude.
+*  APPEND cl_gui_alv_grid=>mc_fc_loc_redo         TO gt_exclude.
+  " (add/remove constants here as you like)
+
+  " Display ALV
+  CALL METHOD go_grid->set_table_for_first_display
+    EXPORTING
+      is_layout            = gs_layout
+      it_toolbar_excluding = gt_exclude   " <<– hide those buttons
+    CHANGING
+      it_fieldcatalog      = gt_fieldcat
+      it_outtab            = gt_alv.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* Form: BUILD_FIELDCATALOG
+*---------------------------------------------------------------------*
+FORM build_fieldcatalog.
+
+  DATA: lv_pos TYPE i VALUE 0.
+
+  CLEAR gt_fieldcat.
+
+  PERFORM add_fcat USING 'SEL_FLAG'  'Selection'      space.
+  PERFORM add_fcat USING 'BUKRS'     'Company Code'   space.
+  PERFORM add_fcat USING 'HKONT'     'G/L Account'    space.
+  PERFORM add_fcat USING 'BELNR'     'Document No.'   space.
+  PERFORM add_fcat USING 'GJAHR'     'Fiscal Year'    space.
+  PERFORM add_fcat USING 'BUZEI'     'Line Item'      space.
+  PERFORM add_fcat USING 'HBKID'     'House Bank'     space.
+  PERFORM add_fcat USING 'HTKID'     'Account ID'     space.
+  PERFORM add_fcat USING 'BUDAT'     'Posting Date'   space.
+  PERFORM add_fcat USING 'BLDAT'     'Document Date'  space.
+  PERFORM add_fcat USING 'DATUM'     'Value Date'     space.
+  PERFORM add_fcat USING 'WRBTR'     'Amount'         space.
+  PERFORM add_fcat USING 'WAERS'     'Currency'       space.
+  PERFORM add_fcat USING 'SHKZG'     'D/C'            space.
+  PERFORM add_fcat USING 'PRCTR'     'Profit Center'  space.
+  PERFORM add_fcat USING 'ZUONR'     'Assignment'     space.
+  PERFORM add_fcat USING 'CLR_BELNR' 'Clearing Doc.'  space.
+  PERFORM add_fcat USING 'CLR_GJAHR' 'Clr Fiscal Yr'  space.
+  PERFORM add_fcat USING 'REMARKS'   'Remarks'        space.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* Form: ADD_FCAT - helper for fieldcatalog
+*---------------------------------------------------------------------*
+FORM add_fcat USING p_fieldname TYPE lvc_fname
+                     p_coltext   TYPE scrtext_l
+                     p_key       TYPE c.
+
+  CLEAR gs_fieldcat.
+  gs_fieldcat-fieldname = p_fieldname.
+  gs_fieldcat-coltext   = p_coltext.
+  IF p_key = 'X'.
+    gs_fieldcat-key = abap_true.
+  ENDIF.
+  " >>> Special handling for selection checkbox
+  IF p_fieldname = 'SEL_FLAG'.
+    gs_fieldcat-checkbox = abap_true. " show as checkbox
+    gs_fieldcat-edit     = abap_true. " make it editable
+    gs_fieldcat-outputlen = 1.
+  ENDIF.
+  " <<<
+  " >>> Fix for Assignment
+  IF p_fieldname = 'ZUONR'.
+    gs_fieldcat-outputlen = 18.        "full length of DZUONR
+*   OPTIONAL (even better):
+*   gs_fieldcat-ref_table = 'BSIS'.
+*   gs_fieldcat-ref_field = 'ZUONR'.
+  ENDIF.
+  " <<<
+  APPEND gs_fieldcat TO gt_fieldcat.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* Form: PERFORM_POSTING - triggered by ALV button 'POST'
+*---------------------------------------------------------------------*
+FORM perform_posting.
+
+  DATA: lt_selected TYPE STANDARD TABLE OF ty_alv_line,
+        ls_selected TYPE ty_alv_line,
+        lv_error    TYPE abap_bool,
+        lv_msgtext  TYPE string.          "<<< NEW
+
+  CLEAR lt_selected.
+
+  " Calculate signed sum using SHKZG (Debit/Credit)
+  CLEAR lv_total_signed.
+
+  " Collect selected lines
+  LOOP AT gt_alv INTO gs_alv WHERE sel_flag = 'X'.
+    IF gs_alv-shkzg = 'S'. "Debit
+      lv_total_signed = lv_total_signed + gs_alv-wrbtr.
+    ELSEIF gs_alv-shkzg = 'H'. "Credit
+      lv_total_signed = lv_total_signed - gs_alv-wrbtr.
+    ELSE.
+      "Unexpected indicator, treat as debit
+      lv_total_signed = lv_total_signed + gs_alv-wrbtr.
+    ENDIF.
+    APPEND gs_alv TO lt_selected.
+  ENDLOOP.
+
+  IF lt_selected IS INITIAL.
+    MESSAGE 'Please select at least one line for clearing.' TYPE 'E'.
+  ENDIF.
+
+  IF lv_total_signed <> 0.
+    MESSAGE 'Net amount of selected items (debit/credit) is not zero. Clearing not allowed.' TYPE 'E'.
+  ENDIF.
+
+  " Build T_FTCLEAR
+  CLEAR lt_ftclear.
+
+  LOOP AT lt_selected INTO ls_selected.
+    CLEAR ls_ftclear.
+    ls_ftclear-agkon = ls_selected-hkont.
+    ls_ftclear-agbuk = ls_selected-bukrs.
+    ls_ftclear-agkoa = 'S'.
+    ls_ftclear-xnops = 'X'.
+    ls_ftclear-selfd = 'BELNR'.
+
+    " Concatenate BELNR+GJAHR+BUZEI
+    ls_ftclear-selvon = ls_selected-belnr.
+    CONCATENATE ls_ftclear-selvon
+                ls_selected-gjahr
+                ls_selected-buzei
+           INTO ls_ftclear-selvon.
+
+    APPEND ls_ftclear TO lt_ftclear.
+  ENDLOOP.
+
+  " Build T_FTPOST (header data)
+  CLEAR lt_ftpost.
+
+  CLEAR ls_ftpost.
+  ls_ftpost-stype = 'K'.
+  ls_ftpost-count = '001'.
+  ls_ftpost-fnam  = 'BKPF-BUDAT'.
+  ls_ftpost-fval  = |{ sy-datum DATE = USER }|.
+  APPEND ls_ftpost TO lt_ftpost.
+
+  CLEAR ls_ftpost.
+  ls_ftpost-stype = 'K'.
+  ls_ftpost-count = '001'.
+  ls_ftpost-fnam  = 'BKPF-BLDAT'.
+  ls_ftpost-fval  = |{ sy-datum DATE = USER }|.
+  APPEND ls_ftpost TO lt_ftpost.
+
+  CLEAR ls_ftpost.
+  ls_ftpost-stype = 'K'.
+  ls_ftpost-count = '001'.
+  ls_ftpost-fnam  = 'BKPF-BLART'.
+  ls_ftpost-fval  = 'AB'.
+  APPEND ls_ftpost TO lt_ftpost.
+
+  CLEAR ls_ftpost.
+  ls_ftpost-stype = 'K'.
+  ls_ftpost-count = '001'.
+  ls_ftpost-fnam  = 'BKPF-BUKRS'.
+  ls_ftpost-fval  = p_bukrs.
+  APPEND ls_ftpost TO lt_ftpost.
+
+  CLEAR lt_blntab.
+  CLEAR lt_fttax.
+  CLEAR lt_return.
+
+
+
+  " Start posting interface
+  CALL FUNCTION 'POSTING_INTERFACE_START'
+    EXPORTING
+      i_client           = sy-mandt
+      i_function         = 'C'
+      i_mode             = 'N'
+      i_update           = 'S'
+    EXCEPTIONS
+      client_incorrect   = 1
+      function_invalid   = 2
+      group_name_missing = 3
+      mode_invalid       = 4
+      update_invalid     = 5
+      user_invalid       = 6
+      OTHERS             = 7.
+
+
+  " Clearing call
+  CALL FUNCTION 'POSTING_INTERFACE_CLEARING'
+    EXPORTING
+      i_auglv                    = 'UMBUCHNG'
+      i_tcode                    = 'FB05'
+      i_sgfunct                  = 'C'
+    IMPORTING
+      e_msgid                    = e_msgid
+      e_msgno                    = e_msgno
+      e_msgty                    = e_msgty
+      e_msgv1                    = e_msgv1
+      e_msgv2                    = e_msgv2
+      e_msgv3                    = e_msgv3
+      e_msgv4                    = e_msgv4
+      e_subrc                    = e_subrc
+    TABLES
+      t_ftclear                  = lt_ftclear
+      t_ftpost                   = lt_ftpost
+      t_blntab                   = lt_blntab
+      t_fttax                    = lt_fttax
+    EXCEPTIONS
+      clearing_procedure_invalid = 1
+      clearing_procedure_missing = 2
+      table_t041a_empty          = 3
+      transaction_code_invalid   = 4
+      amount_format_error        = 5
+      too_many_line_items        = 6
+      company_code_invalid       = 7
+      screen_not_found           = 8
+      no_authorization           = 9
+      OTHERS                     = 10.
+*      t_return  = lt_return.
+
+
+  " End posting interface
+  CALL FUNCTION 'POSTING_INTERFACE_END'
+    EXPORTING
+      i_bdcimmed              = 'X'
+      i_bdcstrtdt             = sy-datum
+      i_bdcstrttm             = sy-uzeit
+    EXCEPTIONS
+      session_not_processable = 1
+      OTHERS                  = 2.
+
+  "------------------------------------------------------------
+  " Analyze return messages and update ALV remarks
+  "------------------------------------------------------------
+  lv_error   = abap_false.
+  CLEAR lv_msgtext.
+
+  " Build message text from E_MSG* fields
+  IF e_msgid IS NOT INITIAL AND e_msgno IS NOT INITIAL.
+    MESSAGE ID e_msgid TYPE e_msgty NUMBER e_msgno
+            WITH e_msgv1 e_msgv2 e_msgv3 e_msgv4
+            INTO lv_msgtext.
+  ENDIF.
+
+  " Error if type = 'E' or subrc <> 0
+  IF e_msgty = 'E' OR e_subrc <> 0.
+    lv_error = abap_true.
+  ENDIF.
+
+  IF lv_error = abap_true.
+
+    " Posting error: write real message into Remarks
+    LOOP AT gt_alv ASSIGNING FIELD-SYMBOL(<ls_alv>) WHERE sel_flag = 'X'.
+      CLEAR <ls_alv>-clr_belnr.
+      CLEAR <ls_alv>-clr_gjahr.
+      <ls_alv>-remarks =
+        COND #( WHEN lv_msgtext IS NOT INITIAL
+                THEN lv_msgtext
+                ELSE 'Document not posted' ).
+    ENDLOOP.
+
+  ELSE.
+
+    " Success: read created clearing document from message
+    CLEAR lv_clr_belnr.
+    CLEAR lv_clr_gjahr.
+
+    lv_clr_belnr = e_msgv1.
+    lv_clr_gjahr = e_msgv2.
+
+    LOOP AT gt_alv ASSIGNING <ls_alv> WHERE sel_flag = 'X'.
+      <ls_alv>-clr_belnr = lv_clr_belnr.
+      <ls_alv>-clr_gjahr = lv_clr_gjahr.
+      <ls_alv>-remarks   =
+        COND #( WHEN lv_msgtext IS NOT INITIAL
+                THEN lv_msgtext
+                ELSE |Document posted { lv_clr_belnr }/{ lv_clr_gjahr }| ).
+      <ls_alv>-sel_flag  = space.
+    ENDLOOP.
+
+  ENDIF.
+ENDFORM.
+*---------------------------------------------------------------------*
+* Form: AUTO_CLEARING_BY_ASSIGNMENT
+*       - Used only in background (sy-batch = 'X')
+*       - For each Assignment (ZUONR):
+*           * Sum amounts with sign using SHKZG
+*           * If net = 0, select those rows and call PERFORM_POSTING
+*---------------------------------------------------------------------*
+FORM auto_clearing_by_assignment.
+
+  FIELD-SYMBOLS: <ls_alv> TYPE ty_alv_line,
+                 <ls_all> TYPE ty_alv_line.
+
+  IF gt_alv IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  " We only need Assignment for grouping
+  SORT gt_alv BY zuonr.
+
+  LOOP AT gt_alv ASSIGNING <ls_alv>
+       GROUP BY ( zuonr = <ls_alv>-zuonr )
+       REFERENCE INTO DATA(lr_group).
+
+    CLEAR lv_total_signed.
+
+    " 1) Calculate signed sum for this Assignment
+    LOOP AT GROUP lr_group ASSIGNING <ls_alv>.
+      IF <ls_alv>-shkzg = 'S'.          " Debit
+        lv_total_signed = lv_total_signed + <ls_alv>-wrbtr.
+      ELSEIF <ls_alv>-shkzg = 'H'.      " Credit
+        lv_total_signed = lv_total_signed - <ls_alv>-wrbtr.
+      ELSE.                             " Unexpected -> treat as debit
+        lv_total_signed = lv_total_signed + <ls_alv>-wrbtr.
+      ENDIF.
+    ENDLOOP.
+ "---------------------------------------------------------------
+    " 2) If NET <> 0 → write remarks & skip posting
+    "---------------------------------------------------------------
+    IF lv_total_signed <> 0.
+      DATA: lv_reason TYPE char255.
+      lv_reason = |Net amount non-zero ({ lv_total_signed }), posting skipped|.
+
+      LOOP AT GROUP lr_group ASSIGNING <ls_alv>.
+        <ls_alv>-remarks = lv_reason.
+      ENDLOOP.
+
+      CONTINUE. "go to next assignment
+    ENDIF.
+
+
+
+    " 2) If net = 0, post this Assignment
+    IF lv_total_signed = 0.
+
+      " Clear all previous selections
+      LOOP AT gt_alv ASSIGNING <ls_all>.
+        <ls_all>-sel_flag = space.
+      ENDLOOP.
+
+      " Mark current Assignment rows as selected
+      LOOP AT GROUP lr_group ASSIGNING <ls_alv>.
+        <ls_alv>-sel_flag = 'X'.
+      ENDLOOP.
+
+      " Re-use existing posting logic (same as foreground)
+      PERFORM perform_posting.
+
+      " PERFORM_POSTING already builds T_FTCLEAR/T_FTPOST and calls
+      " POSTING_INTERFACE_CLEARING etc. based on SEL_FLAG. :contentReference[oaicite:3]{index=3}
+
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* Form: DISPLAY_RESULT_LIST_SALV
+*       - SALV full-screen list (OK in background spool as well)
+*---------------------------------------------------------------------*
+FORM display_result_list.
+
+  DATA: lo_alv  TYPE REF TO cl_salv_table,
+        lo_cols TYPE REF TO cl_salv_columns_table,
+        lo_col  TYPE REF TO cl_salv_column_table.
+
+  IF gt_alv IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  " Create SALV for gt_alv
+  cl_salv_table=>factory(
+    IMPORTING
+      r_salv_table = lo_alv
+    CHANGING
+      t_table      = gt_alv ).
+
+  " Columns & general layout
+  lo_cols = lo_alv->get_columns( ).
+  lo_cols->set_optimize( abap_true ).
+
+  "--- Set headings using helper FORM
+  PERFORM set_salv_col USING lo_cols 'BUKRS'     'CoCd'.
+  PERFORM set_salv_col USING lo_cols 'HKONT'     'G/L'.
+  PERFORM set_salv_col USING lo_cols 'ZUONR'     'Assignment'.
+  PERFORM set_salv_col USING lo_cols 'BELNR'     'Document No.'.
+  PERFORM set_salv_col USING lo_cols 'GJAHR'     'Year'.
+  PERFORM set_salv_col USING lo_cols 'WRBTR'     'Amount'.
+  PERFORM set_salv_col USING lo_cols 'SHKZG'     'D/C'.
+  PERFORM set_salv_col USING lo_cols 'CLR_BELNR' 'Clearing Doc.'.
+  PERFORM set_salv_col USING lo_cols 'CLR_GJAHR' 'Clr Year'.
+  PERFORM set_salv_col USING lo_cols 'REMARKS'   'Remarks'.
+
+  " Display:
+  " - In dialog: full-screen SALV
+  " - In background: list goes to spool
+  lo_alv->display( ).
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  ALV_SET_ONE_COLUMN
+*&---------------------------------------------------------------------*
+* Generic helper to avoid duplicate code for column texts/length
+*&---------------------------------------------------------------------*
+FORM set_salv_col
+  USING    io_columns TYPE REF TO cl_salv_columns_table
+           iv_colname TYPE lvc_fname
+           iv_long   TYPE scrtext_l.
+
+  DATA: lo_column TYPE REF TO cl_salv_column.
+
+  CHECK io_columns IS BOUND.
+
+  TRY.
+      lo_column ?= io_columns->get_column( iv_colname ).
+
+*      IF iv_short IS NOT INITIAL.
+*        lo_column->set_short_text( iv_short ).
+*      ENDIF.
+
+*      IF iv_medium IS NOT INITIAL.
+*        lo_column->set_medium_text( iv_medium ).
+*      ENDIF.
+*
+      IF iv_long IS NOT INITIAL.
+        lo_column->set_long_text( iv_long ).
+      ENDIF.
+*
+*      IF iv_outlen > 0.
+*        lo_column->set_output_length( iv_outlen ).
+*      ENDIF.
+
+    CATCH cx_salv_not_found.
+      " ignore missing columns
+  ENDTRY.
+*  DATA: lo_column_price TYPE REF TO cl_salv_column_table,
+*        ls_color        TYPE lvc_s_colo.
+*
+*
+*  lo_column_price ?= lo_columns->get_column( iv_colname ).
+*  ls_color-col = color.
+*  ls_color-int = 0.
+*  CALL METHOD lo_column_price->set_color
+*    EXPORTING
+*      value = ls_color.
+
+
+ENDFORM.                    " ALV_SET_ONE_COLUMN

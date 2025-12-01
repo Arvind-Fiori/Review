@@ -1,0 +1,159 @@
+*---------------------------------------------------------------------*
+* Include : ZFI_BANK_RECO_CLEAR_TOP
+* Purpose : Global declarations, types, data, classes
+*---------------------------------------------------------------------*
+
+TABLES : skb1.
+
+TYPE-POOLS: slis.
+TYPE-POOLS: icon.
+
+*---------------------------------------------------------------------*
+* Type Declarations
+*---------------------------------------------------------------------*
+TYPES: BEGIN OF ty_skb1,
+         bukrs TYPE skb1-bukrs,
+         hkont TYPE skb1-saknr, "hkont,
+         hbkid TYPE skb1-hbkid,
+         htkid TYPE skb1-hktid,
+       END OF ty_skb1.
+
+TYPES: BEGIN OF ty_bsis,
+         bukrs TYPE bsis-bukrs,
+         hkont TYPE bsis-hkont,
+         belnr TYPE bsis-belnr,
+         gjahr TYPE bsis-gjahr,
+         buzei TYPE bsis-buzei,
+*         hbkid TYPE bsis-hbkid,
+*         htkid TYPE bsis-htkid,
+         budat TYPE bsis-budat,
+         bldat TYPE bsis-bldat,
+         wrbtr TYPE bsis-wrbtr,
+         waers TYPE bsis-waers,
+         shkzg TYPE bsis-shkzg,
+         prctr TYPE bsis-prctr,
+         zuonr TYPE bsis-zuonr,
+       END OF ty_bsis.
+
+TYPES: BEGIN OF ty_bseg,
+         bukrs TYPE bseg-bukrs,
+         belnr TYPE bseg-belnr,
+         gjahr TYPE bseg-gjahr,
+         buzei TYPE bseg-buzei,
+         valut TYPE bseg-valut,
+       END OF ty_bseg.
+
+" ALV output line
+TYPES: BEGIN OF ty_alv_line,
+         sel_flag  TYPE char1,        "Selection Checkbox
+         bukrs     TYPE bukrs,
+         hkont     TYPE hkont,
+         belnr     TYPE belnr_d,
+         gjahr     TYPE gjahr,
+         buzei     TYPE buzei,
+         hbkid     TYPE hbkid,
+         htkid     TYPE hktid,
+         budat     TYPE budat,
+         bldat     TYPE bldat,
+         datum     TYPE valut,        "Value Date from BSEG-VALUT
+         wrbtr     TYPE wrbtr,
+         waers     TYPE waers,
+         shkzg     TYPE shkzg,
+         prctr     TYPE prctr,
+         zuonr     TYPE dzuonr,
+         clr_belnr TYPE belnr_d,      "Clearing document
+         clr_gjahr TYPE gjahr,        "Clearing fiscal year
+         remarks   TYPE char255,      "Status / Remarks
+       END OF ty_alv_line.
+
+*---------------------------------------------------------------------*
+* Data Declarations
+*---------------------------------------------------------------------*
+DATA: gt_skb1 TYPE STANDARD TABLE OF ty_skb1,
+      gs_skb1 TYPE ty_skb1.
+
+DATA: gt_bsis TYPE STANDARD TABLE OF ty_bsis,
+      gs_bsis TYPE ty_bsis.
+
+DATA: gt_bseg TYPE STANDARD TABLE OF ty_bseg,
+      gs_bseg TYPE ty_bseg.
+
+DATA: gt_alv TYPE STANDARD TABLE OF ty_alv_line,
+      gs_alv TYPE ty_alv_line.
+
+" For selection list of G/L accounts (HKONT last digit 1/2/3/4)
+DATA: gt_skb1_filt TYPE STANDARD TABLE OF ty_skb1,
+      gs_skb1_filt TYPE ty_skb1.
+
+" Posting interface tables
+DATA: lt_ftclear TYPE STANDARD TABLE OF ftclear,
+      ls_ftclear TYPE ftclear,
+      lt_ftpost  TYPE STANDARD TABLE OF ftpost,
+      ls_ftpost  TYPE ftpost,
+      lt_blntab  TYPE STANDARD TABLE OF blntab,
+      ls_blntab  TYPE blntab,
+      lt_fttax   TYPE STANDARD TABLE OF fttax,
+      ls_fttax   TYPE fttax,
+      lt_return  TYPE STANDARD TABLE OF mesg,
+      ls_return  TYPE mesg.
+
+DATA : E_MSGID TYPE SY-MSGID,
+      E_MSGNO TYPE  SY-MSGNO,
+     E_MSGTY TYPE SY-MSGTY,
+     E_MSGV1 TYPE  SY-MSGV1,
+     E_MSGV2 TYPE  SY-MSGV2,
+     E_MSGV3 TYPE  SY-MSGV3,
+     E_MSGV4 TYPE  SY-MSGV4,
+     E_SUBRC TYPE  SY-SUBRC.
+" Totals
+DATA: lv_total_signed TYPE wrbtr.
+
+" Resulting clearing document
+DATA: lv_clr_belnr TYPE belnr_d,
+      lv_clr_gjahr TYPE gjahr.
+
+" ALV objects
+DATA: go_container TYPE REF TO cl_gui_custom_container,
+      go_grid      TYPE REF TO cl_gui_alv_grid,
+      gt_fieldcat  TYPE lvc_t_fcat,
+      gs_fieldcat  TYPE lvc_s_fcat,
+      gs_layout    TYPE lvc_s_layo.
+
+*---------------------------------------------------------------------*
+* Local Event Handler Class for ALV
+*---------------------------------------------------------------------*
+CLASS lcl_event_handler DEFINITION.
+  PUBLIC SECTION.
+    METHODS: handle_toolbar
+               FOR EVENT toolbar OF cl_gui_alv_grid
+               IMPORTING e_object e_interactive,
+             handle_user_command
+               FOR EVENT user_command OF cl_gui_alv_grid
+               IMPORTING e_ucomm.
+ENDCLASS.
+
+CLASS lcl_event_handler IMPLEMENTATION.
+
+  METHOD handle_toolbar.
+    DATA: ls_button TYPE stb_button.
+
+    CLEAR ls_button.
+    ls_button-function  = 'POST'.
+    ls_button-icon      = icon_execute_object.
+    ls_button-quickinfo = 'Post Clearing'.
+    ls_button-text      = 'Post'.
+    ls_button-butn_type = 0.
+    APPEND ls_button TO e_object->mt_toolbar.
+  ENDMETHOD.
+
+  METHOD handle_user_command.
+    CASE e_ucomm.
+      WHEN 'POST'.
+        PERFORM perform_posting.
+    ENDCASE.
+  ENDMETHOD.
+
+ENDCLASS.
+
+DATA: go_event_handler TYPE REF TO lcl_event_handler.
+DATA gt_exclude TYPE ui_functions.

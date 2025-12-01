@@ -1,0 +1,65 @@
+*---------------------------------------------------------------------*
+* Include : ZFI_BANK_RECO_CLEAR_SS
+* Purpose : Selection screen definition & related events
+*---------------------------------------------------------------------*
+
+*---------------------------------------------------------------------*
+* Selection Screen
+*---------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+PARAMETERS: p_bukrs TYPE bukrs OBLIGATORY.        "Company Code
+SELECT-OPTIONS: s_hbkid FOR skb1-hbkid OBLIGATORY, "House Bank
+                s_htkid FOR skb1-hktid.            "Account ID (optional)
+
+PARAMETERS: p_ason TYPE sy-datum.                 "As on Date (system-filled)
+SELECT-OPTIONS: s_budat FOR sy-datum.                 "As on Date (system-filled)
+SELECTION-SCREEN END OF BLOCK b1 .
+*---------------------------------------------------------------------*
+* Initialization: As on Date always SY-DATUM
+*---------------------------------------------------------------------*
+INITIALIZATION.
+  p_ason = sy-datum.
+
+*---------------------------------------------------------------------*
+* Make P_ASON non-editable on screen
+*---------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+  LOOP AT SCREEN.
+    IF screen-name = 'P_ASON'.
+      screen-input = '0'.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+
+*---------------------------------------------------------------------*
+* Selection-Screen Validation
+*---------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+  IF p_bukrs IS INITIAL.
+    MESSAGE 'Company Code must be provided.' TYPE 'E'.
+  ENDIF.
+
+  IF s_hbkid[] IS INITIAL.
+    MESSAGE 'House Bank must have at least one value.' TYPE 'E'.
+  ENDIF.
+
+*---------------------------------------------------------------------*
+* Start-of-selection
+*---------------------------------------------------------------------*
+START-OF-SELECTION.
+
+  PERFORM get_data.
+
+  IF gt_alv IS INITIAL.
+    MESSAGE 'No open items found for the selection criteria.' TYPE 'E'.
+  ENDIF.
+
+  " Online -> show ALV
+  IF sy-batch IS INITIAL.
+    CALL SCREEN 100.
+  ELSE.
+    " Background -> auto clearing by Assignment
+    PERFORM auto_clearing_by_assignment.
+      " 2) Show final result list (will go to spool)
+    PERFORM display_result_list.
+  ENDIF.
